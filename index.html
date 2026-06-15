@@ -260,6 +260,19 @@ function App(){
     if(filter==="Active")return!i.done;
     if(filter==="Done")return i.done;
     return true;
+  }).sort((a,b)=>{
+    // Overdue / due soon → top; no due date → middle; done → bottom
+    const aD=a.dueDate?daysUntil(a.dueDate):null;
+    const bD=b.dueDate?daysUntil(b.dueDate):null;
+    // Done items sink to bottom
+    if(a.done!==b.done)return a.done?1:-1;
+    // Both have due dates → soonest first (overdue = negative = highest priority)
+    if(aD!==null&&bD!==null)return aD-bD;
+    // One has due date, other doesn't → due date wins
+    if(aD!==null)return-1;
+    if(bD!==null)return 1;
+    // Neither has due date → keep original order
+    return 0;
   });
 
   const openDetail=(item)=>{setSelectedItem(item);setView("detail");};
@@ -476,11 +489,11 @@ function App(){
               </p>
             </div>
             {/* Overall ring */}
-            <div style={{position:"relative",flexShrink:0}}>
-              <ProgressRing pct={totalPct} size={56} stroke={5} color={totalPct===100?C.green:"#0EA5E9"}/>
-              <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-                <span style={{fontSize:12,fontWeight:800,color:totalPct===100?C.green:"#7DD3FC",lineHeight:1}}>{totalPct}%</span>
-                <span style={{fontSize:8,color:C.muted,marginTop:1}}>done</span>
+            <div style={{position:"relative",flexShrink:0,width:80,height:80}}>
+              <ProgressRing pct={totalPct} size={80} stroke={6} color={totalPct===100?C.green:"#0EA5E9"}/>
+              <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
+                <span style={{fontSize:16,fontWeight:800,color:totalPct===100?C.green:"#7DD3FC",lineHeight:1,textAlign:"center"}}>{totalPct}%</span>
+                <span style={{fontSize:9,color:C.muted,fontWeight:500,textAlign:"center",letterSpacing:"0.04em"}}>done</span>
               </div>
             </div>
           </div>
