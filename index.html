@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content"/>
   <title>My Tasks</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -11,6 +11,16 @@
     // Suppress Babel in-browser transformer warning
     const _warn = console.warn.bind(console);
     console.warn = (...args) => { if (typeof args[0] === 'string' && args[0].includes('Babel')) return; _warn(...args); };
+
+    // Prevent page from jumping when inputs are focused
+    document.addEventListener('focus', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+        const scrollY = window.scrollY;
+        setTimeout(() => window.scrollTo({ top: scrollY, behavior: 'instant' }), 50);
+        setTimeout(() => window.scrollTo({ top: scrollY, behavior: 'instant' }), 150);
+        setTimeout(() => window.scrollTo({ top: scrollY, behavior: 'instant' }), 300);
+      }
+    }, true);
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
@@ -200,6 +210,376 @@ function Field({label,value,color,preWrap}){
   );
 }
 
+// ── LEAVE TRACKER ────────────────────────────────────────────
+const LEAVE_TYPES_DEFAULT = [
+  { id:"annual", label:"Annual Leave", total:38, used:22, unit:"days", color:"#0EA5E9", broughtForward:0, bfExpiry:"" },
+  { id:"sick",   label:"Sick Leave",   total:14, used:8,  unit:"days", color:"#10B981" },
+  { id:"timeoff",label:"Time Off",     total:0,  used:26.25, unit:"hours", color:"#F59E0B" },
+  { id:"ccl",    label:"CCL",          total:1,  used:0,  unit:"days", color:"#A78BFA" },
+  { id:"phil",   label:"PHIL",         total:1,  used:0,  unit:"days", color:"#F472B6" },
+];
+
+const LEAVE_COLORS = ["#0EA5E9","#10B981","#F59E0B","#A78BFA","#F472B6","#EF4444","#34D399","#FB923C"];
+
+function LeaveTracker(){
+  const ff2 = "'Inter', system-ui, sans-serif";
+  const[leaves,setLeavesRaw]=useState(()=>{
+    try{const s=localStorage.getItem("mytasks_leaves");return s?JSON.parse(s):LEAVE_TYPES_DEFAULT;}catch{return LEAVE_TYPES_DEFAULT;}
+  });
+  const[logs,setLogsRaw]=useState(()=>{
+    try{const s=localStorage.getItem("mytasks_leave_logs");return s?JSON.parse(s):[];}catch{return[];}
+  });
+  const[leaveTab,setLeaveTab]=useState("balance"); // balance | calendar | history
+  const[logModal,setLogModal]=useState(null);
+  const[logAmt,setLogAmt]=useState("");
+  const[logDate,setLogDate]=useState(new Date().toISOString().split("T")[0]);
+  const[logDateTo,setLogDateTo]=useState("");
+  const[logReason,setLogReason]=useState("");
+  const[editModal,setEditModal]=useState(null);
+  const[addModal,setAddModal]=useState(false);
+  const[newLabel,setNewLabel]=useState("");
+  const[newTotal,setNewTotal]=useState("");
+  const[newUnit,setNewUnit]=useState("days");
+  const[newColor,setNewColor]=useState("#0EA5E9");
+
+  const setLeaves=(v)=>setLeavesRaw(p=>{const n=typeof v==="function"?v(p):v;try{localStorage.setItem("mytasks_leaves",JSON.stringify(n));}catch{}return n;});
+  const setLogs=(v)=>setLogsRaw(p=>{const n=typeof v==="function"?v(p):v;try{localStorage.setItem("mytasks_leave_logs",JSON.stringify(n));}catch{}return n;});
+
+  const openLog=(l)=>{
+    setLogModal(l);
+    setLogAmt("");
+    setLogDate(new Date().toISOString().split("T")[0]);
+    setLogDateTo("");
+    setLogReason("");
+  };
+
+  const confirmLog=()=>{
+    if(!logModal||!logAmt||!logDate)return;
+    const amt=parseFloat(logAmt);
+    // Auto-calc week label from date
+    const d=new Date(logDate);
+    const weekNum=Math.ceil((((d-new Date(d.getFullYear(),0,1))/86400000)+new Date(d.getFullYear(),0,1).getDay()+1)/7);
+    const weekLabel=`W${weekNum} ${d.getFullYear()}`;
+    const newLog={
+      id:Date.now(),leaveId:logModal.id,label:logModal.label,color:logModal.color,
+      amt,unit:logModal.unit,
+      date:logDate,
+      dateTo:logDateTo||"",
+      reason:logReason.trim(),
+      week:weekLabel,
+    };
+    setLogs(p=>[newLog,...p]);
+    setLeaves(p=>p.map(l=>l.id===logModal.id?{...l,used:parseFloat((l.used+amt).toFixed(2))}:l));
+    setLogModal(null);
+  };
+
+  const deleteLog=(logId,leaveId,amt)=>{
+    setLogs(p=>p.filter(l=>l.id!==logId));
+    setLeaves(p=>p.map(l=>l.id===leaveId?{...l,used:Math.max(0,parseFloat((l.used-amt).toFixed(2)))}:l));
+  };
+
+  const addType=()=>{
+    if(!newLabel.trim())return;
+    setLeaves(p=>[...p,{id:Date.now().toString(),label:newLabel.trim(),total:parseFloat(newTotal)||0,used:0,unit:newUnit,color:newColor}]);
+    setNewLabel("");setNewTotal("");setNewUnit("days");setAddModal(false);
+  };
+
+  const saveEdit=(e)=>{
+    setLeaves(p=>p.map(l=>l.id===e.id?e:l));
+    setEditModal(null);
+  };
+
+  const deleteLeave=(id)=>{
+    setLeaves(p=>p.filter(l=>l.id!==id));
+    setLogs(p=>p.filter(l=>l.leaveId!==id));
+    setEditModal(null);
+  };
+
+  const leaveSwipeX=useRef(null);
+  const leaveSwipeY=useRef(null);
+  const leaveTabs=["balance","history"];
+
+  const onLeaveSwipeStart=(e)=>{ leaveSwipeX.current=e.touches[0].clientX; leaveSwipeY.current=e.touches[0].clientY; };
+  const onLeaveSwipeEnd=(e)=>{
+    if(leaveSwipeX.current===null)return;
+    const dx=e.changedTouches[0].clientX-leaveSwipeX.current;
+    const dy=Math.abs(e.changedTouches[0].clientY-leaveSwipeY.current);
+    if(Math.abs(dx)>50&&dy<80){
+      const tabs=["balance","history"];
+      setLeaveTab(cur=>{
+        const idx=tabs.indexOf(cur);
+        if(dx<0&&idx<tabs.length-1) return tabs[idx+1];
+        if(dx>0&&idx>0) return tabs[idx-1];
+        return cur;
+      });
+    }
+    leaveSwipeX.current=null;
+  };
+
+  const G={bg:C.bg,card:C.card,border:C.border,text:C.text,muted:C.muted,subtle:C.subtle};
+
+  return(
+    <div
+      onTouchStart={onLeaveSwipeStart}
+      onTouchEnd={onLeaveSwipeEnd}
+      style={{minHeight:"100vh",background:G.bg,fontFamily:ff2,paddingBottom:100}}>
+
+      {/* Header */}
+      <div style={{background:"linear-gradient(160deg,#0F1729 0%,#0B0E18 60%)",borderBottom:`1px solid ${G.border}`,padding:"36px 20px 0"}}>
+        <div style={{maxWidth:480,margin:"0 auto"}}>
+          <h1 style={{margin:"0 0 16px",fontSize:26,fontWeight:800,color:G.text,letterSpacing:"-0.5px"}}>Leave</h1>
+          {/* Tabs */}
+          <div style={{display:"flex",gap:0}}>
+            {[{key:"balance",label:"Balance"},{key:"history",label:"History"}].map(t=>{
+              const on=leaveTab===t.key;
+              return(
+                <button key={t.key} onClick={()=>setLeaveTab(t.key)} style={{
+                  flex:1,padding:"10px 0",background:"none",border:"none",cursor:"pointer",
+                  fontFamily:ff2,fontSize:"13px",fontWeight:on?700:500,
+                  color:on?"#FFF":G.muted,
+                  borderBottom:on?"2px solid #FFF":"2px solid transparent",
+                  transition:"all 0.15s",
+                }}>{t.label}</button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div style={{padding:"16px 20px",maxWidth:480,margin:"0 auto"}}>
+
+        {/* Swipe dots */}
+        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:14}}>
+          {leaveTabs.map(t=>(
+            <div key={t} onClick={()=>setLeaveTab(t)} style={{width:leaveTab===t?20:6,height:6,borderRadius:3,background:leaveTab===t?"rgba(255,255,255,0.9)":C.border,transition:"all 0.25s",cursor:"pointer"}}/>
+          ))}
+        </div>
+
+        {/* ── BALANCE TAB ── */}
+        {leaveTab==="balance"&&(
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <p style={{margin:0,fontSize:11,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Entitlements</p>
+              <button onClick={()=>setAddModal(true)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid rgba(255,255,255,0.2)",background:"rgba(255,255,255,0.07)",color:"rgba(255,255,255,0.85)",fontFamily:ff2,fontSize:"12px",fontWeight:700,cursor:"pointer"}}>+ Add</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {leaves.map(l=>{
+                const bf = l.broughtForward || 0;
+                const bfExpired = l.bfExpiry && new Date(l.bfExpiry) < new Date();
+                const effectiveBf = (bf > 0 && !bfExpired) ? bf : 0;
+                const effectiveTotal = l.total + effectiveBf;
+                const remaining=Math.max(0,parseFloat((effectiveTotal-l.used).toFixed(2)));
+                const pct=effectiveTotal>0?Math.min(100,Math.round((l.used/effectiveTotal)*100)):0;
+                const warn=pct>=80;
+                return(
+                  <div key={l.id} style={{background:G.card,borderRadius:16,border:`1px solid ${G.border}`,padding:"16px",position:"relative",overflow:"hidden"}}>
+                    <div style={{position:"absolute",top:0,left:0,bottom:0,width:4,background:l.color,borderRadius:"16px 0 0 16px"}}/>
+                    <div style={{paddingLeft:12}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:700,color:G.text}}>{l.label}</div>
+                          <div style={{fontSize:11,color:G.muted,marginTop:2}}>
+                            <span style={{color:warn?"#EF4444":l.color,fontWeight:700,fontSize:20}}>{remaining}</span>
+                            <span style={{marginLeft:4}}>{l.unit} left</span>
+                          </div>
+                          {effectiveBf>0&&(
+                            <div style={{fontSize:10,marginTop:4,display:"flex",alignItems:"center",gap:4}}>
+                              <span style={{width:6,height:6,borderRadius:"50%",background:"#F59E0B",display:"inline-block",flexShrink:0}}/>
+                              <span style={{color:"#F59E0B",fontWeight:600}}>+{effectiveBf} brought forward</span>
+                              {l.bfExpiry&&<span style={{color:G.muted}}>· expires {l.bfExpiry}</span>}
+                            </div>
+                          )}
+                          {bf>0&&bfExpired&&(
+                            <div style={{fontSize:10,color:"#EF4444",marginTop:3}}>⚠ Brought forward expired</div>
+                          )}
+                        </div>
+                        <div style={{display:"flex",gap:6}}>
+                          <button onClick={()=>openLog(l)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${l.color}44`,background:`${l.color}15`,color:l.color,fontFamily:ff2,fontSize:"11px",fontWeight:700,cursor:"pointer"}}>Log</button>
+                          <button onClick={()=>setEditModal({...l})} style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${G.border}`,background:"transparent",color:G.muted,fontFamily:ff2,fontSize:"11px",cursor:"pointer"}}>✎</button>
+                        </div>
+                      </div>
+                      {effectiveTotal>0&&(
+                        <>
+                          <div style={{height:5,background:"#1E2540",borderRadius:3,overflow:"hidden",marginBottom:5}}>
+                            {/* Show brought-forward portion in amber */}
+                            {effectiveBf>0&&<div style={{position:"relative",height:"100%"}}>
+                              <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${Math.round((l.total/effectiveTotal)*100)}%`,background:l.color}}/>
+                              <div style={{position:"absolute",right:0,top:0,bottom:0,width:`${Math.round((effectiveBf/effectiveTotal)*100)}%`,background:"#F59E0B"}}/>
+                              <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,opacity:0.9}}/>
+                            </div>}
+                            {effectiveBf===0&&<div style={{height:"100%",width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,borderRadius:3,transition:"width 0.6s"}}/>}
+                          </div>
+                          <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:G.muted}}>
+                            <span>Used <span style={{fontWeight:600,color:warn?"#EF4444":G.subtle}}>{l.used} {l.unit}</span></span>
+                            <span style={{fontWeight:700,color:warn?"#EF4444":G.muted}}>{pct}%</span>
+                            <span>Total <span style={{fontWeight:600,color:G.subtle}}>{effectiveTotal}{effectiveBf>0?` (${l.total}+${effectiveBf})`:""} {l.unit}</span></span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── HISTORY TAB ── */}
+        {leaveTab==="history"&&(
+          <div>
+            {logs.length===0?(
+              <div style={{padding:"48px 0",textAlign:"center",color:G.muted,fontSize:13}}>No leave logged yet</div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {logs.sort((a,b)=>b.date.localeCompare(a.date)).map(l=>(
+                  <div key={l.id} style={{background:G.card,borderRadius:12,border:`1px solid ${G.border}`,overflow:"hidden"}}>
+                    <div style={{height:3,background:l.color}}/>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 16px"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                          <span style={{fontSize:14,fontWeight:700,color:G.text}}>{l.label}</span>
+                          <span style={{fontSize:16,fontWeight:800,color:l.color}}>−{l.amt} {l.unit}</span>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",marginBottom:l.reason?4:0}}>
+                          {l.week&&<span style={{fontSize:10,fontWeight:700,color:l.color,background:`${l.color}15`,padding:"2px 7px",borderRadius:20}}>{l.week}</span>}
+                          <span style={{fontSize:11,color:G.muted}}>
+                            {l.date}{l.dateTo&&l.dateTo!==l.date?` → ${l.dateTo}`:""}
+                          </span>
+                        </div>
+                        {l.reason&&<div style={{fontSize:12,color:G.muted,fontStyle:"italic"}}>"{l.reason}"</div>}
+                      </div>
+                      <button onClick={()=>deleteLog(l.id,l.leaveId,l.amt)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,68,68,0.35)",fontSize:18,padding:"0 2px",flexShrink:0,marginTop:2}}>×</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── LOG MODAL ── */}
+      {logModal&&(
+        <div onClick={()=>setLogModal(null)} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:G.card,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,border:`1px solid ${G.border}`,borderBottom:"none",padding:"24px 20px 40px",maxHeight:"85vh",overflowY:"auto"}}>
+            <div style={{width:40,height:4,background:G.border,borderRadius:2,margin:"0 auto 20px"}}/>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:logModal.color,flexShrink:0}}/>
+              <h3 style={{margin:0,fontSize:18,fontWeight:800,color:G.text}}>Log {logModal.label}</h3>
+            </div>
+
+            {/* From — To dates on same row */}
+            <div style={{marginBottom:14}}>
+              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Date</p>
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                <div style={{flex:1}}>
+                  <p style={{margin:"0 0 4px",fontSize:10,color:G.muted}}>From</p>
+                  <input type="date" value={logDate} onChange={e=>{setLogDate(e.target.value);if(!logDateTo)setLogDateTo(e.target.value);}}
+                    style={{width:"100%",padding:"11px 12px",fontSize:"16px",background:G.bg,border:`1px solid ${logModal.color}55`,borderRadius:10,color:G.text,outline:"none",fontFamily:ff2}}/>
+                </div>
+                <div style={{fontSize:13,color:G.muted,paddingTop:18}}>→</div>
+                <div style={{flex:1}}>
+                  <p style={{margin:"0 0 4px",fontSize:10,color:G.muted}}>To (optional)</p>
+                  <input type="date" value={logDateTo} onChange={e=>setLogDateTo(e.target.value)} min={logDate}
+                    style={{width:"100%",padding:"11px 12px",fontSize:"16px",background:G.bg,border:`1px solid ${G.border}`,borderRadius:10,color:G.text,outline:"none",fontFamily:ff2}}/>
+                </div>
+              </div>
+              {/* Auto week label */}
+              {logDate&&(()=>{
+                const d=new Date(logDate);
+                const wn=Math.ceil((((d-new Date(d.getFullYear(),0,1))/86400000)+new Date(d.getFullYear(),0,1).getDay()+1)/7);
+                return <p style={{margin:"6px 0 0",fontSize:11,color:G.muted}}>📅 Week {wn} of {d.getFullYear()}</p>;
+              })()}
+            </div>
+
+            {/* Amount */}
+            <div style={{marginBottom:14}}>
+              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Amount ({logModal.unit})</p>
+              <div style={{display:"flex",gap:6,marginBottom:8}}>
+                {[0.5,1,2,3,4,5].map(n=>(
+                  <button key={n} onClick={()=>setLogAmt(String(n))} style={{flex:1,padding:"9px 0",borderRadius:9,border:`1px solid ${logAmt==n?logModal.color:G.border}`,background:logAmt==n?`${logModal.color}20`:"transparent",color:logAmt==n?logModal.color:G.muted,fontFamily:ff2,fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{n}</button>
+                ))}
+              </div>
+              <input type="number" step="0.5" min="0" value={logAmt} onChange={e=>setLogAmt(e.target.value)} placeholder="Custom amount"
+                style={{width:"100%",padding:"11px 14px",fontSize:"16px",background:G.bg,border:`1px solid ${G.border}`,borderRadius:10,color:G.text,outline:"none",fontFamily:ff2}}/>
+            </div>
+
+            {/* Reason */}
+            <div style={{marginBottom:20}}>
+              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Reason <span style={{textTransform:"none",fontWeight:400,color:"#334155"}}>(optional)</span></p>
+              <input value={logReason} onChange={e=>setLogReason(e.target.value)} placeholder="e.g. Family trip to Bali, Medical appointment…"
+                style={{width:"100%",padding:"11px 14px",fontSize:"16px",background:G.bg,border:`1px solid ${G.border}`,borderRadius:10,color:G.text,outline:"none",fontFamily:ff2}}/>
+            </div>
+
+            <button onClick={confirmLog} disabled={!logAmt||!logDate} style={{width:"100%",padding:"15px",borderRadius:12,border:"none",fontFamily:ff2,fontSize:"15px",fontWeight:700,cursor:logAmt&&logDate?"pointer":"not-allowed",background:logAmt&&logDate?`linear-gradient(135deg,${logModal.color},rgba(255,255,255,0.7))`:G.border,color:"#FFF"}}>
+              Confirm
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── EDIT MODAL ── */}
+      {editModal&&(
+        <div onClick={()=>setEditModal(null)} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:G.card,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,border:`1px solid ${G.border}`,borderBottom:"none",padding:"24px 20px 40px",maxHeight:"70vh",overflowY:"auto"}}>
+            <div style={{width:40,height:4,background:G.border,borderRadius:2,margin:"0 auto 20px"}}/>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+              <h3 style={{margin:0,fontSize:18,fontWeight:800,color:G.text}}>Edit</h3>
+              <button onClick={()=>deleteLeave(editModal.id)} style={{padding:"5px 10px",borderRadius:8,border:"1px solid rgba(239,68,68,0.3)",background:"rgba(239,68,68,0.1)",color:"#EF4444",fontFamily:ff2,fontSize:"12px",fontWeight:700,cursor:"pointer"}}>Delete</button>
+            </div>
+            {[{f:"label",l:"Name",t:"text"},{f:"total",l:"Total (this year)",t:"number"},{f:"used",l:"Used",t:"number"},{f:"broughtForward",l:"Brought Forward (from prev year)",t:"number"},{f:"bfExpiry",l:"Brought Forward Expiry Date",t:"date"}].map(({f,l,t})=>(
+              <div key={f} style={{marginBottom:14}}>
+                <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>{l}</p>
+                <input type={t} value={editModal[f]} onChange={e=>setEditModal(prev=>({...prev,[f]:t==="number"?parseFloat(e.target.value)||0:e.target.value}))}
+                  style={{width:"100%",padding:"12px 14px",fontSize:"16px",background:G.bg,border:`1px solid ${G.border}`,borderRadius:12,color:G.text,outline:"none",fontFamily:ff2}}/>
+              </div>
+            ))}
+            {/* Color picker */}
+            <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Color</p>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+              {LEAVE_COLORS.map(col=>(
+                <div key={col} onClick={()=>setEditModal(p=>({...p,color:col}))} style={{width:28,height:28,borderRadius:"50%",background:col,cursor:"pointer",border:editModal.color===col?"3px solid #FFF":"2px solid transparent",boxShadow:editModal.color===col?"0 0 0 2px "+col:""}}/>
+              ))}
+            </div>
+            <button onClick={()=>saveEdit(editModal)} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",fontFamily:ff2,fontSize:"15px",fontWeight:700,cursor:"pointer",background:`linear-gradient(135deg,${editModal.color},rgba(255,255,255,0.7))`,color:"#FFF"}}>Save</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADD TYPE MODAL ── */}
+      {addModal&&(
+        <div onClick={()=>setAddModal(false)} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:G.card,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,border:`1px solid ${G.border}`,borderBottom:"none",padding:"24px 20px 40px"}}>
+            <div style={{width:40,height:4,background:G.border,borderRadius:2,margin:"0 auto 20px"}}/>
+            <h3 style={{margin:"0 0 20px",fontSize:18,fontWeight:800,color:G.text}}>New Leave Type</h3>
+            {[{f:"newLabel",l:"Name",ph:"e.g. Compassionate Leave",v:newLabel,s:setNewLabel,t:"text"},{f:"newTotal",l:"Total entitlement",ph:"e.g. 3",v:newTotal,s:setNewTotal,t:"number"}].map(({l,ph,v,s,t,f})=>(
+              <div key={f} style={{marginBottom:14}}>
+                <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>{l}</p>
+                <input type={t} value={v} onChange={e=>s(e.target.value)} placeholder={ph} autoFocus={f==="newLabel"}
+                  style={{width:"100%",padding:"12px 14px",fontSize:"16px",background:G.bg,border:`1px solid ${G.border}`,borderRadius:12,color:G.text,outline:"none",fontFamily:ff2}}/>
+              </div>
+            ))}
+            <div style={{marginBottom:14}}>
+              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Unit</p>
+              <div style={{display:"flex",gap:10}}>
+                {["days","hours"].map(u=><button key={u} onClick={()=>setNewUnit(u)} style={{flex:1,padding:"11px",borderRadius:10,cursor:"pointer",fontFamily:ff2,fontWeight:700,fontSize:"13px",background:newUnit===u?"rgba(255,255,255,0.1)":"transparent",border:`1.5px solid ${newUnit===u?"#FFF":G.border}`,color:newUnit===u?"#FFF":G.muted}}>{u}</button>)}
+              </div>
+            </div>
+            <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Color</p>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+              {LEAVE_COLORS.map(col=>(
+                <div key={col} onClick={()=>setNewColor(col)} style={{width:28,height:28,borderRadius:"50%",background:col,cursor:"pointer",border:newColor===col?"3px solid #FFF":"2px solid transparent",boxShadow:newColor===col?"0 0 0 2px "+col:""}}/>
+              ))}
+            </div>
+            <button onClick={addType} disabled={!newLabel.trim()} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",fontFamily:ff2,fontSize:"15px",fontWeight:700,cursor:newLabel.trim()?"pointer":"not-allowed",background:newLabel.trim()?`linear-gradient(135deg,${newColor},rgba(255,255,255,0.8))`:G.border,color:"#FFF"}}>Add</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function App(){
   // Load from localStorage on first render, fall back to samples
   const[items,setItemsRaw]=useState(()=>{
@@ -226,6 +606,7 @@ function App(){
   };
 
   const[view,setView]=useState("home");
+  const[mainPage,setMainPage]=useState("tasks"); // "tasks" | "leave"
   const[activeTab,setActiveTab]=useState("work");
   const[activeSubcat,setActiveSubcat]=useState("All");
   const[filter,setFilter]=useState("Active");
@@ -467,8 +848,31 @@ function App(){
   const dueTodayCount=items.filter(i=>!i.done&&i.dueDate&&daysUntil(i.dueDate)===0).length;
   const doneToday=items.filter(i=>i.done).length;
 
+  const BottomNav=()=>(
+    <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:998,background:C.card,borderTop:`1px solid ${C.border}`,display:"flex",padding:"10px 0 24px"}}>
+      {[
+        {key:"tasks",label:"Tasks",icon:<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 5h12M4 10h12M4 15h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>},
+        {key:"leave",label:"Leave",icon:<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="4" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.6"/><path d="M7 2v4M13 2v4M3 9h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>},
+      ].map(tab=>{
+        const on=mainPage===tab.key;
+        return(
+          <button key={tab.key} onClick={()=>setMainPage(tab.key)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4,background:"none",border:"none",cursor:"pointer",color:on?"#0EA5E9":C.muted,fontFamily:ff,fontSize:"10px",fontWeight:on?700:500}}>
+            {tab.icon}{tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if(mainPage==="leave") return(
+    <div>
+      <LeaveTracker/>
+      <BottomNav/>
+    </div>
+  );
+
   return(
-    <div onTouchStart={onTabSwipeStart} onTouchEnd={onTabSwipeEnd} style={{minHeight:"100vh",background:C.bg,fontFamily:ff,paddingBottom:80}}>
+    <div onTouchStart={onTabSwipeStart} onTouchEnd={onTabSwipeEnd} style={{minHeight:"100vh",background:C.bg,fontFamily:ff,paddingBottom:100}}>
       {urgentItems.length>0&&<UrgentTicker urgentItems={urgentItems}/>}
 
       {/* ── HERO HEADER ── */}
@@ -801,6 +1205,7 @@ function App(){
           </div>
         );
       })()}
+      <BottomNav/>
     </div>
   );
 }
