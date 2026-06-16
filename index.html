@@ -101,12 +101,13 @@ const ff="'Inter', system-ui, sans-serif";
 
 function ProgressRing({pct,size=44,stroke=3.5,color}){
   const r=(size-stroke*2)/2,circ=2*Math.PI*r,offset=circ-(pct/100)*circ;
+  const isComplete=pct>=100;
   return(
-    <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+    <svg width={size} height={size} style={{transform:"rotate(-90deg)",filter:isComplete?`drop-shadow(0 0 6px ${color}88)`:"none",transition:"filter 0.4s ease"}}>
       <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#1E2540" strokeWidth={stroke}/>
       <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
         strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
-        style={{transition:"stroke-dashoffset 0.5s ease"}}/>
+        style={{transition:"stroke-dashoffset 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)"}}/>
     </svg>
   );
 }
@@ -327,14 +328,14 @@ function LeaveTracker(){
       {/* Header */}
       <div style={{background:"linear-gradient(160deg,#0F1729 0%,#0B0E18 60%)",borderBottom:`1px solid ${G.border}`,padding:"36px 20px 0"}}>
         <div style={{maxWidth:480,margin:"0 auto"}}>
-          <h1 style={{margin:"0 0 16px",fontSize:26,fontWeight:800,color:G.text,letterSpacing:"-0.5px"}}>Leave</h1>
+          <h1 style={{margin:"0 0 14px",fontSize:26,fontWeight:800,color:G.text,letterSpacing:"-0.5px"}}>Leave</h1>
           {/* Tabs */}
           <div style={{display:"flex",gap:0}}>
             {[{key:"balance",label:"Balance"},{key:"history",label:"History"}].map(t=>{
               const on=leaveTab===t.key;
               return(
                 <button key={t.key} onClick={()=>setLeaveTab(t.key)} style={{
-                  flex:1,padding:"10px 0",background:"none",border:"none",cursor:"pointer",
+                  flex:1,padding:"8px 0",background:"none",border:"none",cursor:"pointer",
                   fontFamily:ff2,fontSize:"13px",fontWeight:on?700:500,
                   color:on?"#FFF":G.muted,
                   borderBottom:on?"2px solid #FFF":"2px solid transparent",
@@ -346,10 +347,10 @@ function LeaveTracker(){
         </div>
       </div>
 
-      <div style={{padding:"16px 20px",maxWidth:480,margin:"0 auto"}}>
+      <div style={{padding:"12px 20px",maxWidth:480,margin:"0 auto"}}>
 
         {/* Swipe dots */}
-        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"center",gap:6,marginBottom:10}}>
           {leaveTabs.map(t=>(
             <div key={t} onClick={()=>setLeaveTab(t)} style={{width:leaveTab===t?20:6,height:6,borderRadius:3,background:leaveTab===t?"rgba(255,255,255,0.9)":C.border,transition:"all 0.25s",cursor:"pointer"}}/>
           ))}
@@ -407,7 +408,7 @@ function LeaveTracker(){
                               <div style={{position:"absolute",right:0,top:0,bottom:0,width:`${Math.round((effectiveBf/effectiveTotal)*100)}%`,background:"#F59E0B"}}/>
                               <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,opacity:0.9}}/>
                             </div>}
-                            {effectiveBf===0&&<div style={{height:"100%",width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,borderRadius:3,transition:"width 0.6s"}}/>}
+                            {effectiveBf===0&&<div style={{height:"100%",width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,borderRadius:3,transition:"width 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)"}}/>}
                           </div>
                           <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:G.muted}}>
                             <span>Used <span style={{fontWeight:600,color:warn?"#EF4444":G.subtle}}>{l.used} {l.unit}</span></span>
@@ -581,6 +582,13 @@ function LeaveTracker(){
 
 
 function App(){
+  // Live clock — updates every second
+  const[now,setNow]=useState(new Date());
+  useEffect(()=>{
+    const t=setInterval(()=>setNow(new Date()),1000);
+    return()=>clearInterval(t);
+  },[]);
+
   // Load from localStorage on first render, fall back to samples
   const[items,setItemsRaw]=useState(()=>{
     try{const s=localStorage.getItem("mytasks_items");return s?JSON.parse(s):SAMPLE_ITEMS;}catch{return SAMPLE_ITEMS;}
@@ -841,7 +849,7 @@ function App(){
 
   // ── HOME ──────────────────────────────────────────────────────
   const currentCat=CATS[activeTab];
-  const topPad=urgentItems.length>0?68:0;
+  const topPad=urgentItems.length>0?32:0;
   const hour=new Date().getHours();
   const greeting=hour<12?"Good morning":hour<17?"Good afternoon":"Good evening";
   const overdueCount=items.filter(i=>!i.done&&i.dueDate&&daysUntil(i.dueDate)<0).length;
@@ -879,14 +887,18 @@ function App(){
       <div style={{
         background:`linear-gradient(160deg,#0D1829 0%,#0B0E18 60%)`,
         borderBottom:`1px solid ${C.border}`,
-        padding:`${topPad+28}px 20px 24px`,
+        padding:`${topPad>0?topPad+8:28}px 20px 24px`,
         marginBottom:0,
       }}>
         <div style={{maxWidth:480,margin:"0 auto"}}>
           {/* Greeting + date */}
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:20}}>
             <div>
-              <p style={{margin:"0 0 4px",fontSize:11,fontWeight:600,color:C.muted,letterSpacing:"0.12em",textTransform:"uppercase"}}>{TODAY_STR}</p>
+              <p style={{margin:"0 0 4px",fontSize:11,fontWeight:600,color:C.muted,letterSpacing:"0.12em",textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+                {TODAY_STR}
+                <span style={{width:3,height:3,borderRadius:"50%",background:C.muted,display:"inline-block"}}/>
+                <span style={{color:"#7DD3FC",fontWeight:700,letterSpacing:"0.03em"}}>{now.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>
+              </p>
               <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.5px",lineHeight:1.15}}>{greeting} 👋</h1>
               <p style={{margin:"5px 0 0",fontSize:13,color:C.muted}}>
                 {totalActive===0?"All caught up today 🎉":`You have ${totalActive} task${totalActive>1?"s":""} to do`}
@@ -940,7 +952,7 @@ function App(){
                   <div><div style={{fontSize:18,fontWeight:800,color:C.green,lineHeight:1}}>{catDone(key)}</div><div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:2}}>Done</div></div>
                 </div>
                 <div style={{marginTop:10,height:3,background:"#1E2540",borderRadius:3,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:`${pct}%`,background:cat.grad,borderRadius:3,transition:"width 0.6s"}}/>
+                  <div style={{height:"100%",width:`${pct}%`,background:cat.grad,borderRadius:3,transition:"width 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)"}}/>
                 </div>
               </button>
             );
@@ -1009,15 +1021,15 @@ function App(){
               return(
                 <div key={item.id}
                   onMouseDown={()=>startHold(item)} onMouseUp={cancelHold} onMouseLeave={cancelHold}
-                  onTouchStart={()=>startHold(item)} onTouchEnd={cancelHold} onTouchMove={cancelHold}
+                  onTouchStart={()=>startHold(item)} onTouchMove={cancelHold} onTouchEnd={cancelHold}
                   onClick={()=>{if(!isHolding.current)openDetail(item);}}
                   style={{background:C.card,borderRadius:14,cursor:"pointer",border:`1px solid transparent`,transition:"all 0.15s ease",overflow:"hidden"}}
                   onMouseEnter={e=>{e.currentTarget.style.background=C.cardHover;e.currentTarget.style.borderColor=cat.color+"33";}}
                   onMouseLeave={e=>{e.currentTarget.style.background=C.card;e.currentTarget.style.borderColor="transparent";cancelHold();}}
                 >
                   {status&&status!=="ok"&&!item.done&&<div style={{height:2.5,background:status==="soon"?C.amber:C.red}}/>}
-                  <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}>
-                    <button onClick={e=>{e.stopPropagation();toggle(item.id,e);}} style={{width:26,height:26,borderRadius:8,flexShrink:0,border:"none",background:item.done?C.green:"transparent",outline:item.done?"none":`2px solid ${C.border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px"}}>
+                    <button onClick={e=>{e.stopPropagation();toggle(item.id,e);}} style={{width:26,height:26,borderRadius:8,flexShrink:0,border:"none",background:item.done?C.green:"transparent",outline:item.done?"none":`2px solid ${C.border}`,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"background 0.25s, transform 0.2s",transform:item.done?"scale(1.05)":"scale(1)"}}>
                       {item.done&&<svg width="12" height="10" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="#FFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </button>
                     <div style={{flex:1,minWidth:0}}>
