@@ -314,14 +314,21 @@ function Field({label,value,color,preWrap}){
 
 // ── LEAVE TRACKER ────────────────────────────────────────────
 const LEAVE_TYPES_DEFAULT = [
-  { id:"annual", label:"Annual Leave", total:38, used:22, unit:"days", color:"#00c896", broughtForward:0, bfExpiry:"" },
+  { id:"annual", label:"Annual Leave", total:38, used:22, unit:"days", color:"#00c896" },
   { id:"sick",   label:"Sick Leave",   total:14, used:8,  unit:"days", color:"#10B981" },
-  { id:"timeoff",label:"Time Off",     total:0,  used:26.25, unit:"hours", color:"#F59E0B" },
   { id:"ccl",    label:"CCL",          total:1,  used:0,  unit:"days", color:"#A78BFA" },
   { id:"phil",   label:"PHIL",         total:1,  used:0,  unit:"days", color:"#F472B6" },
+  { id:"timeoff",label:"Time Off",     total:0,  used:26.25, unit:"hours", color:"#F59E0B" },
 ];
 
-const LEAVE_COLORS = ["#00c896","#10B981","#F59E0B","#A78BFA","#F472B6","#EF4444","#34D399","#FB923C"];
+const LEAVE_COLORS = [
+  "#00c896","#10B981","#34D399","#6EE7B7", // greens
+  "#38b6e8","#0EA5E9","#3B82F6","#6366F1", // blues
+  "#A78BFA","#8B5CF6","#C084FC","#E879F9", // purples/violets
+  "#F472B6","#FB7185","#EF4444","#F87171", // pinks/reds
+  "#F59E0B","#FB923C","#FBBF24","#FDE047", // oranges/yellows
+  "#94A3B8","#CBD5E1","#cd7f4f","#14B8A6", // neutrals/bronze/teal
+];
 
 function LeaveTracker({onLogsChanged}){
   const ff2 = ff;
@@ -331,13 +338,29 @@ function LeaveTracker({onLogsChanged}){
     return()=>clearInterval(t);
   },[]);
   const[leaves,setLeavesRaw]=useState(()=>{
-    try{const s=localStorage.getItem("mytasks_leaves");return s?JSON.parse(s):LEAVE_TYPES_DEFAULT;}catch{return LEAVE_TYPES_DEFAULT;}
+    try{
+      const s=localStorage.getItem("mytasks_leaves");
+      if(!s)return LEAVE_TYPES_DEFAULT;
+      const saved=JSON.parse(s);
+      // One-time migration: re-sort existing saved leave types to match the
+      // canonical default order (Annual, Sick, CCL, Time Off, PHIL, then any custom types appended).
+      const order=LEAVE_TYPES_DEFAULT.map(d=>d.id);
+      const sorted=[...saved].sort((a,b)=>{
+        const ai=order.indexOf(a.id),bi=order.indexOf(b.id);
+        if(ai===-1&&bi===-1)return 0;
+        if(ai===-1)return 1;
+        if(bi===-1)return -1;
+        return ai-bi;
+      });
+      return sorted;
+    }catch{return LEAVE_TYPES_DEFAULT;}
   });
   const[logs,setLogsRaw]=useState(()=>{
     try{const s=localStorage.getItem("mytasks_leave_logs");return s?JSON.parse(s):[];}catch{return[];}
   });
   const[leaveTab,setLeaveTab]=useState("balance"); // balance | calendar | history
   const[logModal,setLogModal]=useState(null);
+  const[logType,setLogType]=useState("use"); // "use" | "topup"
   const[logAmt,setLogAmt]=useState("");
   const[logDate,setLogDate]=useState(new Date().toISOString().split("T")[0]);
   const[logDateTo,setLogDateTo]=useState("");
@@ -353,12 +376,15 @@ function LeaveTracker({onLogsChanged}){
   const setLeaves=(v)=>setLeavesRaw(p=>{const n=typeof v==="function"?v(p):v;try{localStorage.setItem("mytasks_leaves",JSON.stringify(n));}catch{}return n;});
   const setLogs=(v)=>setLogsRaw(p=>{const n=typeof v==="function"?v(p):v;try{localStorage.setItem("mytasks_leave_logs",JSON.stringify(n));}catch{}return n;});
 
-  const openLog=(l)=>{
+  const openLog=(l,type)=>{
     setLogModal(l);
-    setLogAmt("");
+    setLogType(type||"use");
+    const defaultTopUpAmt={annual:"28",sick:"14",ccl:"3"};
+    setLogAmt(type==="topup"&&defaultTopUpAmt[l.id]?defaultTopUpAmt[l.id]:"");
     setLogDate(new Date().toISOString().split("T")[0]);
     setLogDateTo("");
-    setLogReason("");
+    const autoFillIds=["annual","sick","ccl"];
+    setLogReason(type==="topup"&&autoFillIds.includes(l.id)?"New year allocation":"");
     setLogSubmitted(false);
   };
 
@@ -377,16 +403,25 @@ function LeaveTracker({onLogsChanged}){
       reason:logReason.trim(),
       week:weekLabel,
       submitted:logSubmitted,
+      type:logType,
     };
     setLogs(p=>[newLog,...p]);
-    setLeaves(p=>p.map(l=>l.id===logModal.id?{...l,used:parseFloat((l.used+amt).toFixed(2))}:l));
+    setLeaves(p=>p.map(l=>l.id===logModal.id?
+      (logType==="topup"
+        ?{...l,total:parseFloat((l.total+amt).toFixed(2))}
+        :{...l,used:parseFloat((l.used+amt).toFixed(2))}
+      ):l));
     setLogModal(null);
     onLogsChanged?.();
   };
 
-  const deleteLog=(logId,leaveId,amt)=>{
+  const deleteLog=(logId,leaveId,amt,logEntryType)=>{
     setLogs(p=>p.filter(l=>l.id!==logId));
-    setLeaves(p=>p.map(l=>l.id===leaveId?{...l,used:Math.max(0,parseFloat((l.used-amt).toFixed(2)))}:l));
+    setLeaves(p=>p.map(l=>l.id===leaveId?
+      (logEntryType==="topup"
+        ?{...l,total:Math.max(0,parseFloat((l.total-amt).toFixed(2)))}
+        :{...l,used:Math.max(0,parseFloat((l.used-amt).toFixed(2)))}
+      ):l));
     onLogsChanged?.();
   };
 
@@ -501,13 +536,9 @@ function LeaveTracker({onLogsChanged}){
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               {leaves.map(l=>{
-                const bf = l.broughtForward || 0;
-                const bfExpired = l.bfExpiry && new Date(l.bfExpiry) < new Date();
-                const effectiveBf = (bf > 0 && !bfExpired) ? bf : 0;
-                const effectiveTotal = l.total + effectiveBf;
-                const isUncapped = effectiveTotal <= 0; // no entitlement set — e.g. "Time Off" tracked as a running tally
-                const remaining=Math.max(0,parseFloat((effectiveTotal-l.used).toFixed(2)));
-                const pct=effectiveTotal>0?Math.min(100,Math.round((l.used/effectiveTotal)*100)):0;
+                const isUncapped = l.total <= 0; // no entitlement set — e.g. "Time Off" tracked as a running tally
+                const remaining=Math.max(0,parseFloat((l.total-l.used).toFixed(2)));
+                const pct=l.total>0?Math.min(100,Math.round((l.used/l.total)*100)):0;
                 const warn=pct>=80;
                 return(
                   <div key={l.id} style={{background:G.card,borderRadius:16,border:`1px solid ${G.border}`,padding:"16px",position:"relative",overflow:"hidden"}}>
@@ -527,37 +558,22 @@ function LeaveTracker({onLogsChanged}){
                               <span style={{marginLeft:4}}>{l.unit} left</span>
                             </div>
                           )}
-                          {effectiveBf>0&&(
-                            <div style={{fontSize:10,marginTop:4,display:"flex",alignItems:"center",gap:4}}>
-                              <span style={{width:6,height:6,borderRadius:"50%",background:"#F59E0B",display:"inline-block",flexShrink:0}}/>
-                              <span style={{color:"#F59E0B",fontWeight:600}}>+{effectiveBf} brought forward</span>
-                              {l.bfExpiry&&<span style={{color:G.muted}}>· expires {l.bfExpiry}</span>}
-                            </div>
-                          )}
-                          {bf>0&&bfExpired&&(
-                            <div style={{fontSize:10,color:"#EF4444",marginTop:3}}>⚠ Brought forward expired</div>
-                          )}
                         </div>
                         <div style={{display:"flex",gap:6}}>
-                          <button onClick={()=>openLog(l)} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${l.color}44`,background:`${l.color}15`,color:l.color,fontFamily:ff2,fontSize:"11px",fontWeight:700,cursor:"pointer"}}>Log</button>
+                          <button onClick={()=>openLog(l,"use")} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${l.color}44`,background:`${l.color}15`,color:l.color,fontFamily:ff2,fontSize:"11px",fontWeight:700,cursor:"pointer"}}>Log</button>
+                          <button onClick={()=>openLog(l,"topup")} style={{padding:"5px 10px",borderRadius:8,border:`1px solid #00c89644`,background:"rgba(0,200,150,0.1)",color:"#00c896",fontFamily:ff2,fontSize:"11px",fontWeight:700,cursor:"pointer"}}>+ Top Up</button>
                           <button onClick={()=>setEditModal({...l})} style={{padding:"5px 8px",borderRadius:8,border:`1px solid ${G.border}`,background:"transparent",color:G.muted,fontFamily:ff2,fontSize:"11px",cursor:"pointer"}}>✎</button>
                         </div>
                       </div>
-                      {!isUncapped && effectiveTotal>0&&(
+                      {!isUncapped && l.total>0&&(
                         <>
                           <div style={{height:5,background:"rgba(255,255,255,.08)",borderRadius:3,overflow:"hidden",marginBottom:5}}>
-                            {/* Show brought-forward portion in amber */}
-                            {effectiveBf>0&&<div style={{position:"relative",height:"100%"}}>
-                              <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${Math.round((l.total/effectiveTotal)*100)}%`,background:l.color}}/>
-                              <div style={{position:"absolute",right:0,top:0,bottom:0,width:`${Math.round((effectiveBf/effectiveTotal)*100)}%`,background:"#F59E0B"}}/>
-                              <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,opacity:0.9}}/>
-                            </div>}
-                            {effectiveBf===0&&<div style={{height:"100%",width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,borderRadius:3,transition:"width 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)"}}/>}
+                            <div style={{height:"100%",width:`${pct}%`,background:warn?`linear-gradient(90deg,${l.color},#EF4444)`:l.color,borderRadius:3,transition:"width 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)"}}/>
                           </div>
                           <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:G.muted}}>
                             <span>Used <span style={{fontWeight:600,color:warn?"#EF4444":G.subtle}}>{l.used} {l.unit}</span></span>
                             <span style={{fontWeight:700,color:warn?"#EF4444":G.muted}}>{pct}%</span>
-                            <span>Total <span style={{fontWeight:600,color:G.subtle}}>{effectiveTotal}{effectiveBf>0?` (${l.total}+${effectiveBf})`:""} {l.unit}</span></span>
+                            <span>Total <span style={{fontWeight:600,color:G.subtle}}>{l.total} {l.unit}</span></span>
                           </div>
                         </>
                       )}
@@ -580,13 +596,16 @@ function LeaveTracker({onLogsChanged}){
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {logs.sort((a,b)=>b.date.localeCompare(a.date)).map(l=>(
-                  <div key={l.id} style={{background:G.card,borderRadius:12,border:`1px solid ${G.border}`,overflow:"hidden"}}>
-                    <div style={{height:3,background:l.color}}/>
+                  <div key={l.id} style={{background:G.card,borderRadius:12,border:`1px solid ${l.type==="topup"?"#00c89640":G.border}`,overflow:"hidden"}}>
+                    <div style={{height:3,background:l.type==="topup"?"#00c896":l.color}}/>
                     <div style={{display:"flex",alignItems:"flex-start",gap:12,padding:"12px 16px"}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
-                          <span style={{fontSize:14,fontWeight:700,color:G.text}}>{l.label}</span>
-                          <span style={{fontSize:16,fontWeight:800,color:l.color}}>−{l.amt} {l.unit}</span>
+                          <span style={{fontSize:14,fontWeight:700,color:G.text,display:"flex",alignItems:"center",gap:6}}>
+                            {l.label}
+                            {l.type==="topup"&&<span style={{fontSize:9,fontWeight:700,color:"#00c896",background:"rgba(0,200,150,0.12)",padding:"2px 6px",borderRadius:20,letterSpacing:"0.04em"}}>TOP UP</span>}
+                          </span>
+                          <span style={{fontSize:16,fontWeight:800,color:l.type==="topup"?"#00c896":l.color}}>{l.type==="topup"?"+":"−"}{l.amt} {l.unit}</span>
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",marginBottom:l.reason?4:6}}>
                           {l.week&&<span style={{fontSize:10,fontWeight:700,color:l.color,background:`${l.color}15`,padding:"2px 7px",borderRadius:20}}>{l.week}</span>}
@@ -595,12 +614,14 @@ function LeaveTracker({onLogsChanged}){
                           </span>
                         </div>
                         {l.reason&&<div style={{fontSize:12,color:G.muted,fontStyle:"italic",marginBottom:6}}>"{l.reason}"</div>}
-                        <button onClick={()=>toggleSubmitted(l.id)} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:20,border:`1px solid ${l.submitted?"#00c89655":"#EF444455"}`,background:l.submitted?"rgba(0,200,150,0.1)":"rgba(239,68,68,0.1)",cursor:"pointer",fontFamily:ff2}}>
-                          <span style={{width:6,height:6,borderRadius:"50%",background:l.submitted?"#00c896":"#EF4444",flexShrink:0}}/>
-                          <span style={{fontSize:10,fontWeight:700,color:l.submitted?"#00c896":"#EF4444"}}>{l.submitted?"Submitted":"Not submitted"}</span>
-                        </button>
+                        {l.type!=="topup"&&(
+                          <button onClick={()=>toggleSubmitted(l.id)} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:20,border:`1px solid ${l.submitted?"#00c89655":"#EF444455"}`,background:l.submitted?"rgba(0,200,150,0.1)":"rgba(239,68,68,0.1)",cursor:"pointer",fontFamily:ff2}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:l.submitted?"#00c896":"#EF4444",flexShrink:0}}/>
+                            <span style={{fontSize:10,fontWeight:700,color:l.submitted?"#00c896":"#EF4444"}}>{l.submitted?"Submitted":"Not submitted"}</span>
+                          </button>
+                        )}
                       </div>
-                      <button onClick={()=>deleteLog(l.id,l.leaveId,l.amt)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,68,68,0.35)",fontSize:18,padding:"0 2px",flexShrink:0,marginTop:2}}>×</button>
+                      <button onClick={()=>deleteLog(l.id,l.leaveId,l.amt,l.type)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,68,68,0.35)",fontSize:18,padding:"0 2px",flexShrink:0,marginTop:2}}>×</button>
                     </div>
                   </div>
                 ))}
@@ -615,10 +636,13 @@ function LeaveTracker({onLogsChanged}){
         <div onClick={()=>setLogModal(null)} style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
           <div onClick={e=>e.stopPropagation()} style={{background:G.card,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:520,border:`1px solid ${G.border}`,borderBottom:"none",padding:"24px 20px 40px",maxHeight:"85vh",overflowY:"auto"}}>
             <div style={{width:40,height:4,background:G.border,borderRadius:2,margin:"0 auto 20px"}}/>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
-              <div style={{width:10,height:10,borderRadius:"50%",background:logModal.color,flexShrink:0}}/>
-              <h3 style={{margin:0,fontSize:18,fontWeight:800,color:G.text}}>Log {logModal.label}</h3>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:logType==="topup"?"#00c896":logModal.color,flexShrink:0}}/>
+              <h3 style={{margin:0,fontSize:18,fontWeight:800,color:G.text}}>{logType==="topup"?`Top Up ${logModal.label}`:`Log ${logModal.label}`}</h3>
             </div>
+            <p style={{margin:"0 0 20px",fontSize:12,color:G.muted}}>
+              {logType==="topup"?"Add to this leave's total entitlement (e.g. a new year's allocation).":"Record time used from this leave's balance."}
+            </p>
 
             {/* From — To dates on same row */}
             <div style={{marginBottom:14}}>
@@ -646,10 +670,10 @@ function LeaveTracker({onLogsChanged}){
 
             {/* Amount */}
             <div style={{marginBottom:14}}>
-              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Amount ({logModal.unit})</p>
+              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>{logType==="topup"?"Days to add":"Amount"} ({logModal.unit})</p>
               <div style={{display:"flex",gap:6,marginBottom:8}}>
-                {[0.5,1,2,3,4,5].map(n=>(
-                  <button key={n} onClick={()=>setLogAmt(String(n))} style={{flex:1,padding:"9px 0",borderRadius:9,border:`1px solid ${logAmt==n?logModal.color:G.border}`,background:logAmt==n?`${logModal.color}20`:"transparent",color:logAmt==n?logModal.color:G.muted,fontFamily:ff2,fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{n}</button>
+                {(logType==="topup"?(["ccl","phil","timeoff"].includes(logModal.id)?[1,2,3,5,7,10]:[14,21,28,30,38,42]):[0.5,1,2,3,4,5]).map(n=>(
+                  <button key={n} onClick={()=>setLogAmt(String(n))} style={{flex:1,padding:"9px 0",borderRadius:9,border:`1px solid ${logAmt==n?(logType==="topup"?"#00c896":logModal.color):G.border}`,background:logAmt==n?`${logType==="topup"?"#00c896":logModal.color}20`:"transparent",color:logAmt==n?(logType==="topup"?"#00c896":logModal.color):G.muted,fontFamily:ff2,fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{n}</button>
                 ))}
               </div>
               <input type="number" step="0.5" min="0" value={logAmt} onChange={e=>setLogAmt(e.target.value)} placeholder="Custom amount"
@@ -658,24 +682,37 @@ function LeaveTracker({onLogsChanged}){
 
             {/* Reason */}
             <div style={{marginBottom:16}}>
-              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Reason <span style={{textTransform:"none",fontWeight:400,color:"#334155"}}>(optional)</span></p>
-              <input value={logReason} onChange={e=>setLogReason(e.target.value)} placeholder="e.g. Family trip to Bali, Medical appointment…"
+              <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>Remark <span style={{textTransform:"none",fontWeight:400,color:"#334155"}}>(optional)</span></p>
+              <input value={logReason} onChange={e=>setLogReason(e.target.value)} placeholder={
+                logType==="topup"
+                  ?(logModal.id==="timeoff"?"e.g. Case overrun"
+                    :logModal.id==="phil"?"e.g. Christmas public holiday"
+                    :"e.g. New year annual leave 2027")
+                  :(logModal.id==="annual"?"e.g. Family trip to London…"
+                    :logModal.id==="sick"?"e.g. Fever, medical appt…"
+                    :logModal.id==="ccl"?"e.g. Nanny take leave…"
+                    :logModal.id==="phil"?"e.g. Used it to replace AL (London trip)…"
+                    :logModal.id==="timeoff"?"e.g. Daughter school event…"
+                    :"e.g. Reason for this leave…")
+              }
                 style={{width:"100%",padding:"11px 14px",fontSize:"16px",background:G.bg,border:`1px solid ${G.border}`,borderRadius:10,color:G.text,outline:"none",fontFamily:ff2}}/>
             </div>
 
-            {/* Submitted toggle */}
-            <div style={{marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderRadius:10,background:G.bg,border:`1px solid ${G.border}`}}>
-              <div>
-                <p style={{margin:0,fontSize:13,fontWeight:700,color:G.text}}>Leave submitted?</p>
-                <p style={{margin:"2px 0 0",fontSize:11,color:G.muted}}>{logSubmitted?"Marked as submitted":"You'll get a reminder until submitted"}</p>
+            {/* Submitted toggle — only relevant for usage logs, not top-ups */}
+            {logType!=="topup"&&(
+              <div style={{marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 14px",borderRadius:10,background:G.bg,border:`1px solid ${G.border}`}}>
+                <div>
+                  <p style={{margin:0,fontSize:13,fontWeight:700,color:G.text}}>Leave submitted?</p>
+                  <p style={{margin:"2px 0 0",fontSize:11,color:G.muted}}>{logSubmitted?"Marked as submitted":"You'll get a reminder until submitted"}</p>
+                </div>
+                <button onClick={()=>setLogSubmitted(s=>!s)} style={{width:46,height:26,borderRadius:13,border:"none",cursor:"pointer",background:logSubmitted?"#00c896":"rgba(255,255,255,.15)",position:"relative",transition:"background .2s",flexShrink:0}}>
+                  <div style={{position:"absolute",top:2,left:logSubmitted?22:2,width:22,height:22,borderRadius:"50%",background:"#FFF",transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.4)"}}/>
+                </button>
               </div>
-              <button onClick={()=>setLogSubmitted(s=>!s)} style={{width:46,height:26,borderRadius:13,border:"none",cursor:"pointer",background:logSubmitted?"#00c896":"rgba(255,255,255,.15)",position:"relative",transition:"background .2s",flexShrink:0}}>
-                <div style={{position:"absolute",top:2,left:logSubmitted?22:2,width:22,height:22,borderRadius:"50%",background:"#FFF",transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.4)"}}/>
-              </button>
-            </div>
+            )}
 
-            <button onClick={confirmLog} disabled={!logAmt||!logDate} style={{width:"100%",padding:"15px",borderRadius:12,border:"none",fontFamily:ff2,fontSize:"15px",fontWeight:700,cursor:logAmt&&logDate?"pointer":"not-allowed",background:logAmt&&logDate?`linear-gradient(135deg,${logModal.color},rgba(255,255,255,0.7))`:G.border,color:"#FFF"}}>
-              Confirm
+            <button onClick={confirmLog} disabled={!logAmt||!logDate} style={{width:"100%",padding:"15px",borderRadius:12,border:"none",fontFamily:ff2,fontSize:"15px",fontWeight:700,cursor:logAmt&&logDate?"pointer":"not-allowed",background:logAmt&&logDate?`linear-gradient(135deg,${logType==="topup"?"#00c896":logModal.color},rgba(255,255,255,0.7))`:G.border,color:"#FFF"}}>
+              {logType==="topup"?`Add ${logAmt||"0"} ${logModal.unit} to Total`:"Confirm"}
             </button>
           </div>
         </div>
@@ -690,7 +727,7 @@ function LeaveTracker({onLogsChanged}){
               <h3 style={{margin:0,fontSize:18,fontWeight:800,color:G.text}}>Edit</h3>
               <button onClick={()=>deleteLeave(editModal.id)} style={{padding:"5px 10px",borderRadius:8,border:"1px solid rgba(239,68,68,0.3)",background:"rgba(239,68,68,0.1)",color:"#EF4444",fontFamily:ff2,fontSize:"12px",fontWeight:700,cursor:"pointer"}}>Delete</button>
             </div>
-            {[{f:"label",l:"Name",t:"text"},{f:"total",l:"Total (this year)",t:"number"},{f:"used",l:"Used",t:"number"},{f:"broughtForward",l:"Brought Forward (from prev year)",t:"number"},{f:"bfExpiry",l:"Brought Forward Expiry Date",t:"date"}].map(({f,l,t})=>(
+            {[{f:"label",l:"Name",t:"text"},{f:"total",l:"Total (this year)",t:"number"},{f:"used",l:"Used",t:"number"}].map(({f,l,t})=>(
               <div key={f} style={{marginBottom:14}}>
                 <p style={{margin:"0 0 8px",fontSize:10,fontWeight:700,color:G.muted,textTransform:"uppercase",letterSpacing:"0.1em"}}>{l}</p>
                 <input type={t} value={editModal[f]} onChange={e=>setEditModal(prev=>({...prev,[f]:t==="number"?parseFloat(e.target.value)||0:e.target.value}))}
@@ -757,7 +794,7 @@ function App(){
   const refreshUnsubmittedLeave=()=>{
     try{
       const logs=JSON.parse(localStorage.getItem("mytasks_leave_logs")||"[]");
-      setUnsubmittedLeave(Array.isArray(logs)?logs.filter(l=>!l.submitted):[]);
+      setUnsubmittedLeave(Array.isArray(logs)?logs.filter(l=>l.type!=="topup"&&!l.submitted):[]);
     }catch{setUnsubmittedLeave([]);}
   };
   useEffect(()=>{
